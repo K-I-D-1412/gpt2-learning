@@ -5,3 +5,16 @@
 *.pkl
 .idea/
 out/
+
+# Local learning environment and generated files
+.venv/
+work/
+__pycache__/
+.DS_Store
+
+# Local credentials and downloaded reference handouts
+.env
+.env.*
+!.env.example
+/CS_224n__Default_Final_Project__Build_GPT_2.pdf
+/CS224N_默认期末项目_构建GPT-2_中文译本.pdf
