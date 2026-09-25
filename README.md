@@ -1,48 +1,73 @@
 # GPT-2 Learning｜从张量到语言模型
 
-通过亲手实现 GPT-2 核心组件，学习张量运算、注意力、Transformer、训练与生成，为后续 Agent 开发打基础。
+用 PyTorch 逐步实现 GPT-2 的核心计算，并用中文笔记、维度流程图和局部验证脚本记录实现方法。目前已完成**词元与位置嵌入、因果多头自注意力**，覆盖从 token ID 查表到注意力加权汇总的关键步骤。
 
-本项目基于 [CS224N GPT-2 起始代码](https://github.com/cfifty/public_cs224n_gpt)开展个人自学。当前已完成**因果多头自注意力**，并通过独立参考输出、梯度与行为验证；其余核心模块仍在逐步实现中。这不是一个已经训练好的完整 GPT-2，也不以课程评分、排行榜或提交要求为目标。
+## 已完成哪些部分
 
-## 当前进度
+更新：2026-09-25。
 
-更新：2026-09-24。
-
-| 模块 / 里程碑 | 状态 | 说明 |
+| 模块 | 实现方法 | 状态 |
 |---|---|---|
-| 本地学习环境 | 已完成 | Python 3.12、PyTorch 2.8.0，CPU 小张量验证 |
-| 张量与 Q/K/V 基础 | 已完成 | batch、线性投影、参数共享、拆头与维度推导 |
-| `CausalSelfAttention.attention` | 已完成并验证 | 缩放点积、padding / 因果掩码、softmax、dropout、V 汇总与合头 |
-| 学习笔记与流程图 | 已完成 | 从文本到注意力输出，标注每一步的维度 |
-| 词元与位置嵌入 | 下一步 | `models/gpt2.py` 中的 `embed` |
-| Transformer 层 | 待实现 | 归一化、残差连接与前馈网络 |
-| Adam 优化器 | 待实现 | 参数更新及对应验证 |
-| 预训练模型对齐 | 待开展 | 核心组件完成后加载权重、比较参考模型 |
-| 训练与下游任务 | 待开展 | 分类、复述检测、文本生成及扩展实验 |
+| 词元与位置嵌入 | token ID 查词表、位置编号查位置表，广播相加后应用 dropout | 已完成并验证 |
+| 因果多头自注意力 | Q/K/V 投影与拆头、缩放点积、padding 与因果掩码、softmax、dropout、V 汇总与合头 | 已完成并验证 |
+| Transformer 层 | LayerNorm、残差连接、注意力输出投影与前馈网络 | 下一步 |
+| Adam 优化器 | 动量估计、偏差修正与参数更新 | 待实现 |
+| 预训练模型对齐 | 加载 GPT-2 权重，对照参考模型输出 | 待开展 |
+| 训练与应用 | 分类、复述检测、文本生成及对照实验 | 待开展 |
 
-目前没有进行模型训练，也没有下载预训练 GPT-2 权重。
+当前验证以 CPU 小张量为主，完整模型串联和训练将在后续模块完成后进行。
 
-## 已完成的注意力实现
+## 实现流程
 
-输入隐藏表示的形状为 `[B,T,D]`。起始代码已提供 Q/K/V 线性层和拆头操作；本人完成的是 `attention()` 内部计算，最终返回 `[B,T,D]`。
+### 1. 将 token ID 转为含位置信息的向量
+
+[`GPT2Model.embed`](models/gpt2.py) 接收整数索引 `[B,T]`。词嵌入表为每个 ID 提供 D 维向量，位置嵌入表为每个位置提供 D 维向量；两者逐元素相加，再经过嵌入 dropout，输出 `[B,T,D]`。
 
 ```mermaid
 flowchart TD
-    X["输入隐藏表示<br/>[B,T,D]"]
-    QKV["Q/K/V 投影与拆头<br/>各为 [B,H,T,d]，d = D/H"]
-    S["Q 与 K 转置相乘，再除以 √d<br/>[B,H,T,T]"]
-    M["padding 掩码 + 因果掩码<br/>[B,H,T,T]"]
-    A["沿 key 维度 softmax，再 dropout<br/>[B,H,T,T]"]
-    C["权重乘 V<br/>[B,H,T,d]"]
-    O["合并同一位置的各个头<br/>[B,T,D]"]
-    X --> QKV --> S --> M --> A --> C --> O
+    IDs["token ID<br/>[B,T]"] --> W["词嵌入查表<br/>[B,T,D]"]
+    Pos["位置编号 0 到 T-1<br/>[1,T]"] --> P["位置嵌入查表<br/>[1,T,D]"]
+    W --> Add["沿 batch 广播相加<br/>[B,T,D]"]
+    P --> Add
+    Add --> Drop["嵌入 dropout<br/>[B,T,D]"]
 ```
 
-实现文件：[modules/attention.py](modules/attention.py)。详细解释见 [GPT-2 注意力学习笔记](GPT2_ATTENTION_NOTES.md)。
+同一 token ID 使用同一行词向量；不同位置使用不同的位置表行。位置向量在 batch 中共享，相加后特征维度 D 不变。详细推导与数值例子见 [嵌入笔记](GPT2_EMBEDDING_NOTES.md)。
 
-## 快速开始
+### 2. 用因果多头注意力汇总上下文
 
-已在 macOS、Python 3.12、PyTorch 2.8.0 的 CPU 环境验证以下脚本。锁定依赖记录在 [requirements-local.lock.txt](requirements-local.lock.txt)，原课程的 `env.yml` 保留作参考。
+[`CausalSelfAttention`](modules/attention.py) 接收 `[B,T,D]` 隐藏表示。三个线性层分别生成 Q、K、V，将 D 拆为 H 个头，每头维度 `d=D/H`，然后执行：
+
+```mermaid
+flowchart TD
+    QKV["Q/K/V 投影与拆头<br/>各为 [B,H,T,d]"]
+    S["Q × Kᵀ / √d<br/>[B,H,T,T]"]
+    M["加 padding 掩码，屏蔽未来位置<br/>[B,H,T,T]"]
+    A["沿 key 维度 softmax，再 dropout<br/>[B,H,T,T]"]
+    C["注意力权重 × V<br/>[B,H,T,d]"]
+    O["拼接同一 token 的各头输出<br/>[B,T,D]"]
+    QKV --> S --> M --> A --> C --> O
+```
+
+因果掩码确保每个位置只能读取自身和过去；padding 掩码排除补齐的 key。各 batch 行独立计算。详细说明见 [注意力笔记](GPT2_ATTENTION_NOTES.md)。
+
+嵌入输出会先进入 Transformer 层的归一化，再传入注意力模块生成 Q/K/V；这一整层的串联是接下来的实现目标。
+
+## 如何验证
+
+| 脚本 | 检查内容 | 结果 |
+|---|---|---|
+| [gpt2-first-steps.py](gpt2-first-steps.py) | Q/K/V 投影、拆头形状和基础反向传播 | 通过 |
+| [embedding-check.py](embedding-check.py) | 确定数值查表、位置广播、重复 ID、单 token 与最大长度、batch 独立性、精确参数梯度、dropout 行为 | 通过 |
+| [attention-check.py](attention-check.py) | 与 PyTorch SDPA 对照输出和梯度，检查因果性、padding、batch 独立性与 dropout | 通过 |
+
+注意力在 CPU `float64` 检查中与参考输出的最大绝对误差为 `2.22e-16`。嵌入验证使用预先设置的表值和独立计算的预期结果，检查重复 ID 与共享位置的梯度累加。以上脚本均使用小张量，无需下载模型权重。
+
+完整模型的 `sanity_check.py` 需要预训练权重，将在 Transformer 等模块完成后运行。
+
+## 运行方式
+
+已验证环境：macOS、Python 3.12、PyTorch 2.8.0、CPU。依赖版本见 [requirements-local.lock.txt](requirements-local.lock.txt)。
 
 首次配置：
 
@@ -54,62 +79,32 @@ source .venv/bin/activate
 python -m pip install -r requirements-local.lock.txt
 ```
 
-先观察已有投影与拆头，再验证完整注意力：
-
-```bash
-.venv/bin/python gpt2-first-steps.py
-.venv/bin/python attention-check.py
-```
-
-这两个脚本只使用随机小张量，不需要 GPU、数据集下载或预训练模型权重。若本地已经建好 `.venv`，可以直接运行上述两条命令。
-
-在 VS Code 中打开项目文件夹，通过 `Python: Select Interpreter` 选择项目内的 `.venv/bin/python`，打开脚本后使用 Python 扩展的运行按钮即可。
-
-后续需要下载模型时，可将缓存放在项目的忽略目录中：
+在项目根目录运行：
 
 ```bash
 export HF_HOME="$PWD/work/huggingface"
+.venv/bin/python gpt2-first-steps.py
+.venv/bin/python embedding-check.py
+.venv/bin/python attention-check.py
 ```
 
-## 验证范围与结果
-
-[attention-check.py](attention-check.py) 使用 PyTorch 的 `scaled_dot_product_attention` 作为独立数值参考，并检查：
-
-- 不同 batch、序列长度、隐藏维度与头数下的输出，包括单 token 情况。
-- 输入与 Q/K/V 参数的梯度有限，且与参考梯度一致。
-- 修改未来 token 不影响此前位置的输出。
-- 修改被屏蔽的 key 不影响有效 query；专门包含过去位置被屏蔽的情形，避免因果掩码掩盖 padding 错误。
-- 不同序列的数据和掩码互不干扰。
-- dropout 在训练模式下有随机性，在评估模式下与无 dropout 参考一致。
-
-当前结果：**全部通过**。CPU `float64` 参考输出最大绝对误差为 `2.22e-16`。这是局部组件验证，不代表完整 GPT-2 已通过验证，也不代表模型已获得语言能力。
-
-完整 `sanity_check.py` 需要加载预训练权重，并依赖尚未完成的其他核心模块，留到后续阶段运行；优化器验证同样在实现后进行。
+在 VS Code 中打开项目文件夹，通过 `Python: Select Interpreter` 选择 `.venv/bin/python`，即可编辑并运行脚本。
 
 ## 学习资料与代码导航
 
-| 文件 | 用途 |
+| 文件 | 内容 |
 |---|---|
-| [START_HERE.md](START_HERE.md) | 学习路线、环境使用和第一课入口 |
-| [LEARNING_STATUS.md](LEARNING_STATUS.md) | 已学内容、验证记录和下一步 |
-| [GPT2_ATTENTION_NOTES.md](GPT2_ATTENTION_NOTES.md) | batch、初始化、三张完整流程图与维度速查 |
-| [AGENTS.md](AGENTS.md) | 自学协作约定：本人写核心代码，助手讲解、提示和检查 |
-| [gpt2-first-steps.py](gpt2-first-steps.py) | 观察 Q/K/V 投影与拆头，检查基础反向传播 |
-| [attention-check.py](attention-check.py) | 完整注意力模块的局部验证 |
-| [modules/attention.py](modules/attention.py) | 已完成的因果多头自注意力 |
-| [models/gpt2.py](models/gpt2.py) | 词元与位置嵌入、模型主体，仍有待实现部分 |
-| [modules/gpt2_layer.py](modules/gpt2_layer.py) | Transformer 层，待实现 |
-| [optimizer.py](optimizer.py) | Adam 优化器，待实现 |
+| [START_HERE.md](START_HERE.md) | 学习路线和环境使用 |
+| [GPT2_ATTENTION_NOTES.md](GPT2_ATTENTION_NOTES.md) | batch、Q/K/V、多头注意力与维度流程图 |
+| [GPT2_EMBEDDING_NOTES.md](GPT2_EMBEDDING_NOTES.md) | 查表、位置编号、广播相加、dropout 与实现回顾 |
+| [LEARNING_STATUS.md](LEARNING_STATUS.md) | 当前进度和下一步 |
+| [models/gpt2.py](models/gpt2.py) | 嵌入与模型主体 |
+| [modules/attention.py](modules/attention.py) | 因果多头自注意力 |
+| [modules/gpt2_layer.py](modules/gpt2_layer.py) | Transformer 层 |
+| [optimizer.py](optimizer.py) | Adam 优化器 |
 
-本地虚拟环境、缓存、生成权重与单独下载的课程 PDF 不纳入版本管理。起始代码附带的数据与任务脚本保留，后续按学习进度使用。
+## 来源
 
-## 项目来源与贡献说明
+项目基于 [cfifty/public_cs224n_gpt](https://github.com/cfifty/public_cs224n_gpt)，起始版本为 [`7570cfa`](https://github.com/cfifty/public_cs224n_gpt/commit/7570cfa4385f3417298573c770df5ddfe2d97f89)。在原有模型框架、Q/K/V 投影与拆头代码上，补全了 `attention()` 和 `embed()`，并新增组件验证与学习笔记。
 
-- 起始仓库：[cfifty/public_cs224n_gpt](https://github.com/cfifty/public_cs224n_gpt)。
-- 本地学习起点：[`7570cfa4385f3417298573c770df5ddfe2d97f89`](https://github.com/cfifty/public_cs224n_gpt/commit/7570cfa4385f3417298573c770df5ddfe2d97f89)。
-- 当前由本人完成的模型核心代码：`CausalSelfAttention.attention`。起始仓库已提供的 Q/K/V 投影层、拆头及其他框架不计为本人从零实现。
-- AI 助手用于逐步讲解、代码检查、环境维护、学习笔记和验证脚本；核心模块按本人理解后亲自编写的方式推进。
-- 原课程说明保存在 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)，其中的课程提交与评分流程仅作为历史资料。
-- 原始许可证保留在 [LICENSE](LICENSE)。起始项目的部分代码来自 Hugging Face Transformers，沿用其原有来源与版权声明。
-
-下一学习目标：理解词嵌入查表与位置向量相加，亲自实现 `GPT2Model.embed`。
+原始说明见 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)，许可证见 [LICENSE](LICENSE)。保留原代码及其 Hugging Face Transformers 来源与版权声明。

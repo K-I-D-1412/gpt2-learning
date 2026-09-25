@@ -47,19 +47,18 @@ class GPT2Model(GPTPreTrainedModel):
     input_shape = input_ids.size()
     seq_length = input_shape[1]
 
-    inputs_embeds = None
+    inputs_embeds = self.word_embedding(input_ids)  # [B-batch_size, T-seq_len, D-hidden_size]
 
     ### YOUR CODE HERE
-    raise NotImplementedError
-
-
     pos_ids = self.position_ids[:, :seq_length]
-    pos_embeds = None
+    pos_embeds = self.pos_embedding(pos_ids)  # [1, T-seq_len, D-hidden_size] When adding, the position embedding is broadcasted to match the batch size.
 
     ### TODO: Use pos_ids to get position embedding from self.pos_embedding into pos_embeds.
     ###       Then, add two embeddings together; then apply dropout and return.
     ### YOUR CODE HERE
-    raise NotImplementedError
+    embeddings = inputs_embeds + pos_embeds
+    embeddings = self.embed_dropout(embeddings)
+    return embeddings
 
 
   def encode(self, hidden_states, attention_mask):

@@ -1,12 +1,13 @@
 # GPT-2 自学项目：从这里开始
 
-## 我们的目标与分工
+## 学习目标
 
 目标：理解语言模型的基本结构、训练和生成，为后续 Agent 开发建立基础。
-你亲自编写模型核心代码；助手负责逐步解释、提示、检查和环境排障。
-按理解程度推进，不采用课程评分、排行榜或提交要求。
+按模块理解计算原理、完成实现，再用小张量验证输出和梯度。
 
 第一课配套笔记：[从文本、batch 到多头注意力](GPT2_ATTENTION_NOTES.md)，包含完整流程图、各步维度和 batch 并行计算的解释。
+
+第二课配套笔记：[词元与位置嵌入](GPT2_EMBEDDING_NOTES.md)。包含查表与位置相加的数值例子、维度流程图、dropout、已完成的 `GPT2Model.embed` 实现回顾与验证记录。
 
 ## 学习路线
 
@@ -96,6 +97,12 @@ python gpt2-first-steps.py
 
 它仅使用 CPU 小张量，对照独立参考计算，并检查掩码、梯度、batch 独立性和 dropout，不下载模型权重。
 
+第二课的 `embed()` 也已由用户完成。运行 [embedding-check.py](embedding-check.py) 可单独检查查表、位置广播、梯度和 dropout，不执行 Transformer 层：
+
+```bash
+HF_HOME="$PWD/work/huggingface" .venv/bin/python embedding-check.py
+```
+
 补齐完整模型后才运行需要预训练权重的 `sanity_check.py`；未补齐时失败是预期现象。
 
 ## 来源
@@ -104,4 +111,4 @@ python gpt2-first-steps.py
 
 本地起始版本：`7570cfa4385f3417298573c770df5ddfe2d97f89`。
 
-这是基于课程起始代码的个人自学项目。后续简历应明确说明自己完成的组件和实验。
+原始项目说明保存在 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)。
